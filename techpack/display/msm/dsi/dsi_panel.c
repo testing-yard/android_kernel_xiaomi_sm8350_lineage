@@ -387,6 +387,12 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 		DSI_DEBUG("TWM Enabled, skip panel power off\n");
 		return rc;
 	}
+
+	if (panel->mi_panel_id == 0x4D323000360200 
+     || panel->mi_panel_id == 0x4D323000420D00) {
+	  mdelay(5);
+	}
+
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
@@ -627,9 +633,9 @@ static int dsi_panel_update_doze(struct dsi_panel *panel) {
 	int rc = 0;
 
 	if (panel->doze_mode_active == panel->doze_mode_requested) {
-		DSI_INFO(
-			"[%s] active doze mode is equal to requested mode: %d\n",
-			panel->name, panel->doze_mode_active);
+		//DSI_INFO(
+		//	"[%s] active doze mode is equal to requested mode: %d\n",
+		//	panel->name, panel->doze_mode_active);
 		return 0;
 	}
 
@@ -2000,6 +2006,13 @@ const char *cmd_set_prop_map[DSI_CMD_SET_MAX] = {
 	"mi,mdss-dsi-local-hbm-hlpm-white-1000nit-command",
 	"mi,mdss-dsi-local-hbm-off-to-normal-command",
 	"mi,mdss-dsi-local-hbm-off-to-hlpm-command",
+	"mi,mdss-dsi-fps-120-gamma-command",
+	"mi,mdss-dsi-fps-90-gamma-command",
+	"mi,mdss-dsi-fps-60-gamma-command",
+    "mi,mdss-dsi-hbm-on-command",
+    "mi,mdss-dsi-hbm-off-command",
+    "mi,mdss-dsi-flat-mode-on-command",
+    "mi,mdss-dsi-flat-mode-off-command"
 };
 
 const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
@@ -2034,6 +2047,14 @@ const char *cmd_set_state_map[DSI_CMD_SET_MAX] = {
 	"mi,mdss-dsi-local-hbm-hlpm-white-1000nit-command-state",
 	"mi,mdss-dsi-local-hbm-off-to-normal-command-state",
 	"mi,mdss-dsi-local-hbm-off-to-hlpm-command-state",
+	"mi,mdss-dsi-fps-120-gamma-command-state",
+	"mi,mdss-dsi-fps-90-gamma-command-state",
+	"mi,mdss-dsi-fps-60-gamma-command-state",
+    "mi,mdss-dsi-hbm-on-command-state",
+    "mi,mdss-dsi-hbm-off-command-state",
+    "mi,mdss-dsi-flat-mode-command-state",
+    "mi,mdss-dsi-flat-mode-command-state"
+
 };
 
 int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt)
@@ -2816,7 +2837,7 @@ static int dsi_panel_parse_dsc_params(struct dsi_display_mode *mode,
 		priv_info->dsc.config.dsc_panel_id = 0;
 		DSI_DEBUG("mi,mdss-dsc-panel-id not specified\n");
 	} else {
-		DSI_DEBUG("mi,mdss-dsc-panel-id is 0x%llx\n", priv_info->dsc.config.dsc_panel_id);
+		DSI_INFO("mi,mdss-dsc-panel-id is 0x%llx\n", priv_info->dsc.config.dsc_panel_id);
 	}
 
 	rc = utils->read_u32(utils->data, "qcom,mdss-dsc-version", &data);
@@ -3822,9 +3843,170 @@ static ssize_t sysfs_fod_ui_read(struct device *dev, struct device_attribute *at
 static DEVICE_ATTR(fod_hbm, 0200, NULL, sysfs_fod_hbm_write);
 static DEVICE_ATTR(fod_ui, 0400, sysfs_fod_ui_read, NULL);
 
+void dsi_panel_apply_hbm(struct dsi_panel *panel) {
+	mutex_lock(&panel->panel_lock);
+	if (!panel->panel_initialized)
+		goto exit;
+
+	if( panel->hbm_enabled ) dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_ON);
+    else dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_OFF);
+
+exit:
+	mutex_unlock(&panel->panel_lock);
+}
+
+void dsi_panel_apply_flat_mode(struct dsi_panel *panel) {
+	mutex_lock(&panel->panel_lock);
+	if (!panel->panel_initialized)
+		goto exit;
+
+	if( panel->flat_mode_enabled ) dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_ON);
+    else dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_OFF);
+
+exit:
+	mutex_unlock(&panel->panel_lock);
+}
+
+void dsi_panel_request_hbm(struct dsi_panel *panel, bool status)
+{
+	mutex_lock(&panel->panel_lock);
+	if (!panel->panel_initialized)
+		goto exit;
+
+	panel->hbm_enabled = status;
+
+	if( status ) dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_ON);
+    else dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_HBM_OFF);
+
+exit:
+	mutex_unlock(&panel->panel_lock);
+}
+
+void dsi_panel_request_flat_mode(struct dsi_panel *panel, bool status)
+{
+	mutex_lock(&panel->panel_lock);
+	if (!panel->panel_initialized)
+		goto exit;
+
+	panel->flat_mode_enabled = status;
+
+	if( status ) dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FLAT_MODE_ON);
+    else dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FLAT_MODE_OFF);
+
+exit:
+	mutex_unlock(&panel->panel_lock);
+}
+
+
+
+static ssize_t sysfs_hbm_write(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+	bool status;
+	int rc = 0;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		DSI_ERR("Invalid display\n");
+		return -EINVAL;
+	}
+
+	rc = kstrtobool(buf, &status);
+	if (rc) {
+		DSI_ERR("%s: kstrtobool failed. rc=%d\n", __func__, rc);
+		return rc;
+	}
+
+	panel = display->panel;
+
+	dsi_panel_request_hbm(panel, status);
+
+	return count;
+}
+
+static ssize_t sysfs_flat_mode_write(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+	bool status;
+	int rc = 0;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		DSI_ERR("Invalid display\n");
+		return -EINVAL;
+	}
+
+	rc = kstrtobool(buf, &status);
+	if (rc) {
+		DSI_ERR("%s: kstrtobool failed. rc=%d\n", __func__, rc);
+		return rc;
+	}
+
+	panel = display->panel;
+
+	dsi_panel_request_flat_mode(panel, status);
+
+	return count;
+}
+
+
+static ssize_t sysfs_hbm_read(struct device *dev, struct device_attribute *attr,
+				 char *buf)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+	bool status;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		pr_err("Invalid display\n");
+		return -EINVAL;
+	}
+
+	panel = display->panel;
+
+	mutex_lock(&panel->panel_lock);
+	status = panel->hbm_enabled;
+	mutex_unlock(&panel->panel_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", status);
+}
+
+static ssize_t sysfs_flat_mode_read(struct device *dev, struct device_attribute *attr,
+				 char *buf)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+	bool status;
+
+	display = dev_get_drvdata(dev);
+	if (!display) {
+		pr_err("Invalid display\n");
+		return -EINVAL;
+	}
+
+	panel = display->panel;
+
+	mutex_lock(&panel->panel_lock);
+	status = panel->flat_mode_enabled;
+	mutex_unlock(&panel->panel_lock);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", status);
+}
+
+static DEVICE_ATTR(hbm, 0660, sysfs_hbm_read, sysfs_hbm_write);
+static DEVICE_ATTR(flat_mode, 0660, sysfs_flat_mode_read, sysfs_flat_mode_write);
+
+
 static struct attribute *panel_attrs[] = {
 	&dev_attr_fod_hbm.attr,
 	&dev_attr_fod_ui.attr,
+	&dev_attr_hbm.attr,
+	&dev_attr_flat_mode.attr,
 	NULL,
 };
 static struct attribute_group panel_attrs_group = {
@@ -3900,6 +4082,15 @@ struct dsi_panel *dsi_panel_get(struct device *parent,
 				rc);
 		goto error;
 	}
+
+	rc = utils->read_u64(utils->data, "mi,panel-id", &panel->mi_panel_id);
+	if (rc) {
+		panel->mi_panel_id = 0;
+		DSI_INFO("mi,panel-id not specified\n");
+	} else {
+		DSI_INFO("mi,panel-id 0x%llX\n", panel->mi_panel_id);
+    }
+
 
 	rc = dsi_panel_parse_panel_mode(panel);
 	if (rc) {
@@ -5043,6 +5234,39 @@ int dsi_panel_switch(struct dsi_panel *panel)
 	return rc;
 }
 
+int dsi_panel_gamma_switch(struct dsi_panel *panel)
+{
+	int rc = 0;
+
+	if (!panel) {
+		DSI_ERR("Invalid params\n");
+		return -EINVAL;
+	}
+
+	if (!panel->panel_initialized) {
+		DSI_ERR("panel_initialized fail\n");
+		return -EINVAL;
+	}
+
+	mutex_lock(&panel->panel_lock);
+	if (panel->cur_mode->timing.refresh_rate == 120){
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FPS_120_GAMMA);
+	} else if (panel->cur_mode->timing.refresh_rate == 90) {
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FPS_90_GAMMA);
+	} else if (panel->cur_mode->timing.refresh_rate == 60){
+		rc = dsi_panel_tx_cmd_set(panel, DSI_CMD_SET_MI_FPS_60_GAMMA);
+	}
+
+	if (rc)
+		DSI_ERR("[%s] failed to send DSI_CMD_SET_MI_FPS_GAMMA cmds, rc=%d\n",
+		       panel->name, rc);
+
+	mutex_unlock(&panel->panel_lock);
+	//DSI_INFO("%s panel: DSI_CMD_SET_MI_FPS_GAMMA\n", panel->type);
+
+	return rc;
+}
+
 int dsi_panel_post_switch(struct dsi_panel *panel)
 {
 	int rc = 0;
@@ -5103,6 +5327,12 @@ int dsi_panel_post_enable(struct dsi_panel *panel)
 	}
 error:
 	mutex_unlock(&panel->panel_lock);
+
+	if (panel->mi_panel_id == 0x4D323000360200 
+     || panel->mi_panel_id == 0x4D323000420D00) {
+		dsi_panel_gamma_switch(panel);
+	}
+
 	return rc;
 }
 

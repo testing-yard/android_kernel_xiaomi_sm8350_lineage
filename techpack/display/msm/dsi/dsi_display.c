@@ -57,6 +57,8 @@ static const struct of_device_id dsi_display_dt_match[] = {
 	{}
 };
 
+unsigned int cur_refresh_rate = 60;
+
 bool is_skip_op_required(struct dsi_display *display)
 {
 	if (!display)
@@ -5025,6 +5027,8 @@ static int dsi_display_dfps_update(struct dsi_display *display,
 	 */
 	panel_mode->dsi_mode_flags = 0;
 
+	WRITE_ONCE(cur_refresh_rate, panel_mode->timing.refresh_rate);
+
 error:
 	SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
 	return rc;
@@ -5128,6 +5132,7 @@ static int dsi_display_get_dfps_timing(struct dsi_display *display,
 		if (display->panel->cur_mode) {
 			curr_refresh_rate =
 				display->panel->cur_mode->timing.refresh_rate;
+            WRITE_ONCE(cur_refresh_rate, curr_refresh_rate);
 		} else {
 			DSI_ERR("cur_mode is not initialized\n");
 			return -EINVAL;
@@ -6179,6 +6184,7 @@ int dsi_display_dev_probe(struct platform_device *pdev)
 	node = pdev->dev.of_node;
 	if (boot_disp->boot_disp_en) {
 		/* The panel name should be same as UEFI name index */
+        DSI_INFO("Looking for %s in dt\n", boot_disp->name);
 		panel_node = of_find_node_by_name(mdp_node, boot_disp->name);
 		if (!panel_node)
 			DSI_WARN("panel_node %s not found\n", boot_disp->name);
@@ -7479,6 +7485,9 @@ int dsi_display_validate_mode_change(struct dsi_display *display,
 		/* dfps and dynamic clock with const fps use case */
 		if (dsi_display_mode_switch_dfps(cur_mode, adj_mode)) {
 			dsi_panel_get_dfps_caps(display->panel, &dfps_caps);
+			if (cur_mode->timing.refresh_rate != adj_mode->timing.refresh_rate) {
+				WRITE_ONCE(cur_refresh_rate, adj_mode->timing.refresh_rate);
+			}
 			if (dfps_caps.dfps_support ||
 				dyn_clk_caps->maintain_const_fps) {
 				DSI_DEBUG("Mode switch is seamless variable refresh\n");
@@ -7572,6 +7581,10 @@ int dsi_display_validate_mode(struct dsi_display *display,
 		}
 	}
 
+    if( display->panel == NULL ||  display->panel->cur_mode == NULL || display->panel->cur_mode->timing.refresh_rate != adj_mode.timing.refresh_rate ) {
+       	WRITE_ONCE(cur_refresh_rate, mode->timing.refresh_rate);
+    }
+
 error:
 	mutex_unlock(&display->display_lock);
 	return rc;
@@ -7623,9 +7636,9 @@ int dsi_display_set_mode(struct dsi_display *display,
 		goto error;
 	}
 
-	DSI_INFO("mdp_transfer_time=%d, hactive=%d, vactive=%d, fps=%d\n",
-			adj_mode.priv_info->mdp_transfer_time_us,
-			timing.h_active, timing.v_active, timing.refresh_rate);
+	//DSI_INFO("mdp_transfer_time=%d, hactive=%d, vactive=%d, fps=%d\n",
+	//		adj_mode.priv_info->mdp_transfer_time_us,
+	//		timing.h_active, timing.v_active, timing.refresh_rate);
 	SDE_EVT32(adj_mode.priv_info->mdp_transfer_time_us,
 			timing.h_active, timing.v_active, timing.refresh_rate);
 
@@ -7636,6 +7649,10 @@ int dsi_display_set_mode(struct dsi_display *display,
 		mi_disp_notifier_call_chain(MI_DISP_FPS_CHANGE_EVENT, &notify_data);
 		sysfs_notify(&display->dev->kobj, NULL, "dynamic_fps");
 	}
+
+    if( display->panel->cur_mode->timing.refresh_rate != adj_mode.timing.refresh_rate ) {
+       	WRITE_ONCE(cur_refresh_rate, mode->timing.refresh_rate);
+    }
 
 	memcpy(display->panel->cur_mode, &adj_mode, sizeof(adj_mode));
 error:
@@ -8489,6 +8506,8 @@ int dsi_display_enable(struct dsi_display *display)
 
 	mode = display->panel->cur_mode;
 
+	WRITE_ONCE(cur_refresh_rate, mode->timing.refresh_rate);
+
 	if (mode->dsi_mode_flags & DSI_MODE_FLAG_DMS) {
 		rc = dsi_panel_post_switch(display->panel);
 		if (rc) {
@@ -8525,6 +8544,13 @@ int dsi_display_enable(struct dsi_display *display)
 				   display->name, rc);
 
 		goto error;
+	}
+	if (display->panel->mi_panel_id == 0x4D323000360200 
+     || display->panel->mi_panel_id == 0x4D323000420D00) {
+		rc = dsi_panel_gamma_switch(display->panel);
+		if (rc) {
+		DSI_ERR("failed to swith gamma, rc=%d\n",rc);
+		}
 	}
 
 	if (display->config.panel_mode == DSI_OP_VIDEO_MODE) {

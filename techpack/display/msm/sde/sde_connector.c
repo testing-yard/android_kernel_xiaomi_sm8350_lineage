@@ -763,6 +763,10 @@ static int _sde_connector_update_hdr_metadata(struct sde_connector *c_conn,
 	return rc;
 }
 
+
+void sde_connector_apply_flat_mode(struct sde_connector *c_conn);
+void sde_connector_apply_hbm(struct sde_connector *c_conn);
+
 static int _sde_connector_update_dirty_properties(
 				struct drm_connector *connector)
 {
@@ -797,6 +801,8 @@ static int _sde_connector_update_dirty_properties(
 					connector->state, CONNECTOR_PROP_LP);
 			_sde_connector_update_power_locked(c_conn);
 			mutex_unlock(&c_conn->lock);
+            sde_connector_apply_hbm(c_conn);
+            sde_connector_apply_flat_mode(c_conn);
 			break;
 		case CONNECTOR_PROP_HDR_METADATA:
 			_sde_connector_update_hdr_metadata(c_conn, c_state);
@@ -812,6 +818,9 @@ static int _sde_connector_update_dirty_properties(
 	if (c_conn->colorspace_updated) {
 		c_conn->colorspace_updated = false;
 		sde_connector_set_colorspace(c_conn);
+
+        sde_connector_apply_hbm(c_conn);
+        sde_connector_apply_flat_mode(c_conn);
 	}
 
 	/*
@@ -821,6 +830,9 @@ static int _sde_connector_update_dirty_properties(
 	if (c_conn->bl_scale_dirty || (bl_config && bl_config->unset_bl_level)) {
 		_sde_connector_update_bl_scale(c_conn);
 		c_conn->bl_scale_dirty = false;
+
+        sde_connector_apply_hbm(c_conn);
+        sde_connector_apply_flat_mode(c_conn);
 	}
 
 	return 0;
@@ -838,19 +850,67 @@ struct sde_connector_dyn_hdr_metadata *sde_connector_get_dyn_hdr_meta(
 	return &c_state->dyn_hdr_meta;
 }
 
+
+void sde_connector_apply_hbm(struct sde_connector *c_conn)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+
+
+	if (!c_conn)
+		return;
+
+	display = (struct dsi_display *) c_conn->display;
+	if (!display)
+		return;
+
+	if (display->display_selection_type != DSI_PRIMARY)
+		return;
+
+	panel = display->panel;
+	if (!panel)
+		return;
+
+    dsi_panel_apply_hbm(panel);
+}
+
+void sde_connector_apply_flat_mode(struct sde_connector *c_conn)
+{
+	struct dsi_display *display;
+	struct dsi_panel *panel;
+
+	if (!c_conn)
+		return;
+
+	display = (struct dsi_display *) c_conn->display;
+	if (!display)
+		return;
+
+	if (display->display_selection_type != DSI_PRIMARY)
+		return;
+
+	panel = display->panel;
+	if (!panel)
+		return;
+
+    dsi_panel_apply_flat_mode(panel);
+}
+
 void sde_connector_fod_pre_kickoff(struct drm_connector *connector)
 {
-	struct sde_connector *c_conn;
+    struct sde_connector *c_conn;
 	struct dsi_display *display;
 	struct dsi_panel *panel;
 	int rc;
 
-	if (!connector)
+    if (!connector)
+        return;
+
+    c_conn = to_sde_connector(connector);
+	if (!c_conn)
 		return;
 
-	c_conn = to_sde_connector(connector);
-	if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI)
-		return;
+    if (c_conn->connector_type != DRM_MODE_CONNECTOR_DSI)
 
 	display = (struct dsi_display *) c_conn->display;
 	if (!display)

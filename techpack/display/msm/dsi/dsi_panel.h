@@ -281,9 +281,12 @@ struct dsi_panel {
 	enum dsi_doze_mode_type doze_mode_requested;
 	bool aod_nolp_command_enabled;
 
+    u64 mi_panel_id;
 	bool fod_hbm_enabled;
 	bool fod_hbm_requested;
 	bool fod_ui;
+    bool hbm_enabled;
+    bool flat_mode_enabled;
 	int local_hbm_on_1000nit_51_index;
 };
 
@@ -390,6 +393,7 @@ int dsi_panel_mode_switch_to_vid(struct dsi_panel *panel);
 int dsi_panel_switch(struct dsi_panel *panel);
 
 int dsi_panel_post_switch(struct dsi_panel *panel);
+int dsi_panel_gamma_switch(struct dsi_panel *panel);
 
 void dsi_dsc_pclk_param_calc(struct msm_display_dsc_info *dsc, int intf_width);
 
@@ -426,5 +430,7 @@ int dsi_panel_get_fod_hbm(struct dsi_panel *panel);
 int dsi_panel_apply_requested_fod_hbm(struct dsi_panel *panel);
 void dsi_panel_set_fod_ui(struct dsi_panel *panel, bool status);
 void dsi_panel_request_fod_hbm(struct dsi_panel *panel, bool status);
+void dsi_panel_apply_hbm(struct dsi_panel *panel);
+void dsi_panel_apply_flat_mode(struct dsi_panel *panel);
 
 #endif /* _DSI_PANEL_H_ */
